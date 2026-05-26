@@ -107,6 +107,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     rate = int(data["completed"] / total * 100) if total > 0 else 0
     bar_filled = rate // 10
+    bar_filled = min(bar_filled, 10)
     bar = "█" * bar_filled + "░" * (10 - bar_filled)
 
     text = (
