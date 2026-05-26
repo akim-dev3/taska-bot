@@ -1,30 +1,29 @@
 import os
+import asyncio
 import logging
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters,
-)
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart, Command
 from database import init_db, add_task, get_tasks, complete_task, delete_task, clear_done, get_stats
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.effective_user.first_name
-    text = (
+
+@dp.message(CommandStart())
+async def start(message: Message):
+    name = message.from_user.first_name
+    await message.answer(
         f"Hey {name}! I'm Taska — your personal task manager.\n\n"
         "Commands:\n"
         "/add <task> — add a new task\n"
@@ -34,152 +33,138 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/cleardone — delete all completed tasks\n"
         "/help — show this message"
     )
-    await update.message.reply_text(text)
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    await start(message)
 
 
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@dp.message(Command("add"))
+async def add(message: Message):
+    user_id = message.from_user.id
+    args = message.text.split(maxsplit=1)
 
-    if not context.args:
-        await update.message.reply_text("Usage: /add <task text>\nExample: /add Buy groceries")
+    if len(args) < 2 or not args[1].strip():
+        await message.answer("Usage: /add <task text>\nExample: /add Buy groceries")
         return
 
-    text = " ".join(context.args).strip()
+    text = args[1].strip()
 
-    if len(text) > 300:
-        await update.message.reply_text("Task text is too long. Keep it under 280 characters.")
+    if len(text) > 280:
+        await message.answer("Task text is too long. Keep it under 280 characters.")
         return
 
     task_id = add_task(user_id, text)
-    await update.message.reply_text(f"Task #{task_id} added:\n{text}")
+    await message.answer(f"Task #{task_id} added:\n{text}")
 
 
-async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@dp.message(Command("list"))
+async def list_tasks(message: Message):
+    user_id = message.from_user.id
     tasks = get_tasks(user_id, done=0)
 
     if not tasks:
-        await update.message.reply_text("No active tasks. Add one with /add <task>")
+        await message.answer("No active tasks. Add one with /add <task>")
         return
 
-    buttons = []
     lines = ["Your active tasks:\n"]
+    buttons = []
 
-    for task_id, text, created_at in tasks:
+    for task_id, text, _ in tasks:
         lines.append(f"#{task_id} {text}")
         buttons.append([
-            InlineKeyboardButton(f"✓ Done #{task_id}", callback_data=f"done:{task_id}"),
-            InlineKeyboardButton(f"✕ Delete #{task_id}", callback_data=f"delete:{task_id}"),
+            InlineKeyboardButton(text=f"✓ Done #{task_id}", callback_data=f"done:{task_id}"),
+            InlineKeyboardButton(text=f"✕ Delete #{task_id}", callback_data=f"delete:{task_id}"),
         ])
 
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("\n".join(lines), reply_markup=reply_markup)
+    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer("\n".join(lines), reply_markup=markup)
 
 
-async def done_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@dp.message(Command("done"))
+async def done_list(message: Message):
+    user_id = message.from_user.id
     tasks = get_tasks(user_id, done=1)
 
     if not tasks:
-        await update.message.reply_text("No completed tasks yet.")
+        await message.answer("No completed tasks yet.")
         return
 
     lines = [f"Completed tasks ({len(tasks)}):\n"]
     for task_id, text, _ in tasks:
         lines.append(f"✓ #{task_id} {text}")
-
     lines.append("\nUse /cleardone to remove all completed tasks.")
-    await update.message.reply_text("\n".join(lines))
+    await message.answer("\n".join(lines))
 
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@dp.message(Command("stats"))
+async def stats(message: Message):
+    user_id = message.from_user.id
     data = get_stats(user_id)
     total = data["pending"] + data["completed"]
 
     if total == 0:
-        await update.message.reply_text("No tasks yet. Start with /add <task>")
+        await message.answer("No tasks yet. Start with /add <task>")
         return
 
-    rate = int(data["completed"] / total * 100) if total > 0 else 0
-    bar_filled = rate // 10
-    bar_filled = min(bar_filled, 10)
+    rate = int(data["completed"] / total * 100)
+    bar_filled = min(rate // 10, 10)
     bar = "█" * bar_filled + "░" * (10 - bar_filled)
 
-    text = (
+    await message.answer(
         f"Your progress:\n\n"
         f"Active:    {data['pending']}\n"
         f"Completed: {data['completed']}\n"
         f"Total:     {total}\n\n"
         f"{bar} {rate}% done"
     )
-    await update.message.reply_text(text)
 
 
-async def clear_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@dp.message(Command("cleardone"))
+async def clear_done_command(message: Message):
+    user_id = message.from_user.id
     count = clear_done(user_id)
 
     if count == 0:
-        await update.message.reply_text("No completed tasks to clear.")
+        await message.answer("No completed tasks to clear.")
     else:
-        await update.message.reply_text(f"Cleared {count} completed task(s).")
+        await message.answer(f"Cleared {count} completed task(s).")
 
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+@dp.callback_query(F.data.startswith("done:"))
+async def callback_done(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])
+    success = complete_task(user_id, task_id)
 
-    user_id = query.from_user.id
-    data = query.data
-
-    if data.startswith("done:"):
-        task_id = int(data.split(":")[1])
-        success = complete_task(user_id, task_id)
-        if success:
-            await query.edit_message_text(f"Task #{task_id} marked as done.")
-        else:
-            await query.edit_message_text(f"Task #{task_id} not found or already done.")
-
-    elif data.startswith("delete:"):
-        task_id = int(data.split(":")[1])
-        success = delete_task(user_id, task_id)
-        if success:
-            await query.edit_message_text(f"Task #{task_id} deleted.")
-        else:
-            await query.edit_message_text(f"Task #{task_id} not found.")
+    if success:
+        await callback.message.edit_text(f"Task #{task_id} marked as done.")
+    else:
+        await callback.message.edit_text(f"Task #{task_id} not found or already done.")
+    await callback.answer()
 
 
-async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Unknown command. Use /help to see available commands.")
+@dp.callback_query(F.data.startswith("delete:"))
+async def callback_delete(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])
+    success = delete_task(user_id, task_id)
+
+    if success:
+        await callback.message.edit_text(f"Task #{task_id} deleted.")
+    else:
+        await callback.message.edit_text(f"Task #{task_id} not found.")
+    await callback.answer()
 
 
-def main():
+async def main():
     if not TOKEN:
         raise ValueError("BOT_TOKEN is not set in .env")
-
     init_db()
-
-    app = Application.builder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("add", add))
-    app.add_handler(CommandHandler("list", list_tasks))
-    app.add_handler(CommandHandler("done", done_list))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("cleardone", clear_done_command))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    app.add_handler(MessageHandler(filters.COMMAND, unknown))
-
     logger.info("Bot started")
-    app.run_polling(drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES)
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
