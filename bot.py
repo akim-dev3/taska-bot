@@ -51,7 +51,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args).strip()
 
     if len(text) > 300:
-        await update.message.reply_text("Task text is too long. Keep it under 300 characters.")
+        await update.message.reply_text("Task text is too long. Keep it under 280 characters.")
         return
 
     task_id = add_task(user_id, text)
