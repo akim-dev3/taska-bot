@@ -2,7 +2,7 @@
 
 A clean, fully functional Telegram bot for personal task management. Built with Python and SQLite — no external services required.
 
-**Bot:** [@taska_manager_bot](https://t.me/taska_manager_bot)
+**Bot:** [@taska_mng_bot](https://t.me/taska_manager_bot)
 
 ---
 
